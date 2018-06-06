@@ -894,11 +894,9 @@ pc.extend(pc, function () {
 					}
 					
 					if ( isSkin ) {
-						
 						for (bi =0; bi < boneComponentSize; bi++) {
-							batchData[j * batchVertSizeF + batchOffsetEF + vbOffset + bi] =  dynIndexCount + data[j * vertSizeF + offsetBI + bi];
+							batchData[j * batchVertSizeF + batchOffsetEF + vbOffset + bi] =  dynIndexCount +  data8[j * vertSizeF * 4 + offsetBI * 4 + bi];
 						}
-						
 					}
 					else {
 						batchData[j * batchVertSizeF + batchOffsetEF + vbOffset] = dynIndexCount;
