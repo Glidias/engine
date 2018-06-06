@@ -51,6 +51,108 @@ pc.extend(pc, function () {
         this.name = name;
         this.layers = layers === undefined ? [pc.LAYERID_WORLD] : layers;
     };
+	
+	
+	// Modified SkinInstanceBatched for batching animated skins
+	
+	var SkinInstancesBatched = function (device, nodes, rootNode, inverseBindPoses) {
+		this.rootNode = rootNode;
+        this._dirty = true;
+		this.inverseBindPoses = inverseBindPoses;
+		this.device = device;
+		
+        // Unique per clone
+        this.bones = nodes;
+
+        var numBones = nodes.length;
+
+        if (device.supportsBoneTextures) {
+            var size;
+            if (numBones > 256)
+                size = 64;
+            else if (numBones > 64)
+                size = 32;
+            else if (numBones > 16)
+                size = 16;
+            else
+                size = 8;
+
+            this.boneTexture = new pc.Texture(device, {
+                width: size,
+                height: size,
+                format: pc.PIXELFORMAT_RGBA32F,
+                mipmaps: false,
+                minFilter: pc.FILTER_NEAREST,
+                magFilter: pc.FILTER_NEAREST
+            });
+            this.matrixPalette = this.boneTexture.lock();
+        } else {
+            this.matrixPalette = new Float32Array(numBones * 16);
+        }
+		
+		this.matrices = [];
+        for (var i = 0; i < numBones; i++) {
+            this.matrices[i] = new pc.Mat4();
+        }
+
+		
+	};
+	SkinInstancesBatched.invMatrix = new pc.Mat4();
+	
+	SkinInstancesBatched.prototype = {
+
+        updateMatrices: function (rootNode) {
+			var _invMatrix = SkinInstancesBatched.invMatrix;
+		   _invMatrix.copy(rootNode.getWorldTransform()).invert();
+		   var vp;
+		   
+		   var i = 0;
+		   var inverseBindPoses = this.inverseBindPoses;
+		   for (var v = 0; v <inverseBindPoses.length; v++) {
+			   vp = inverseBindPoses[v];
+			  
+			   for (var b=0; b< vp.boneCount; b++) {
+				    this.matrices[i].mul2(_invMatrix, this.bones[i].getWorldTransform()); // world space -> rootNode space
+					this.matrices[i].mul2(this.matrices[i], vp.pose[b]); // rootNode space -> bind space
+					i++;
+			   }
+		   }
+        },
+
+        updateMatrixPalette: function () {
+            var pe;
+            var mp = this.matrixPalette;
+            var base;
+
+            for (var i = this.bones.length - 1; i >= 0; i--) {
+                pe = this.matrices[i].data;
+
+                // Copy the matrix into the palette, ready to be sent to the vertex shader
+                base = i * 16;
+                mp[base] = pe[0];
+                mp[base + 1] = pe[1];
+                mp[base + 2] = pe[2];
+                mp[base + 3] = pe[3];
+                mp[base + 4] = pe[4];
+                mp[base + 5] = pe[5];
+                mp[base + 6] = pe[6];
+                mp[base + 7] = pe[7];
+                mp[base + 8] = pe[8];
+                mp[base + 9] = pe[9];
+                mp[base + 10] = pe[10];
+                mp[base + 11] = pe[11];
+                mp[base + 12] = pe[12];
+                mp[base + 13] = pe[13];
+                mp[base + 14] = pe[14];
+                mp[base + 15] = pe[15];
+            }
+
+            if (this.device.supportsBoneTextures) {
+                this.boneTexture.lock();
+                this.boneTexture.unlock();
+            }
+        }
+    };
 
     // Modified SkinInstance for batching
     // Doesn't contain bind matrices, simplier
@@ -626,10 +728,7 @@ pc.extend(pc, function () {
         // #endif
 
         if (!this._init) {
-            var boneLimit = "#define BONE_LIMIT " + this.device.getBoneLimit() + "\n";
-            this.transformVS = boneLimit + "#define DYNAMICBATCH\n" + pc.shaderChunks.transformVS;
-            this.skinTexVS = pc.shaderChunks.skinBatchTexVS;
-            this.skinConstVS = pc.shaderChunks.skinBatchConstVS;
+			this.boneLimit =  "#define BONE_LIMIT " + this.device.getBoneLimit() + "\n";
             this.vertexFormats = {};
             this._init = true;
         }
@@ -641,9 +740,11 @@ pc.extend(pc, function () {
         // Check which vertex format and buffer size are needed, find out material
         var material = null;
         var mesh, elems, numVerts, vertSize;
-        var hasPos, hasNormal, hasUv, hasUv2, hasTangent, hasColor;
+        var hasPos, hasNormal, hasUv, hasUv2, hasTangent, hasColor, hasBlendWeight;
+		var isSkin = meshInstances[0].skinInstance instanceof pc.SkinInstance;
         var batchNumVerts = 0;
         var batchNumIndices = 0;
+		var boneComponentSize = 1;
         for (i = 0; i < meshInstances.length; i++) {
             if (!material) {
                 material = meshInstances[i].material;
@@ -673,6 +774,10 @@ pc.extend(pc, function () {
                 } else if (elems[j].name === pc.SEMANTIC_COLOR) {
                     hasColor = true;
                 }
+				else if (elems[j].name === pc.SEMANTIC_BLENDWEIGHT && dynamic) {
+                    hasBlendWeight = true;
+					boneComponentSize = elems[j].numComponents;
+                }
             }
             batchNumIndices += mesh.primitive[0].count;
         }
@@ -682,17 +787,20 @@ pc.extend(pc, function () {
             // #endif
             return;
         }
+		
+	
 
         // Create buffers
-        var entityIndexSizeF = dynamic ? 1 : 0;
-        var batchVertSizeF = 3 + (hasNormal ? 3 : 0) + (hasUv ? 2 : 0) +  (hasUv2 ? 2 : 0) + (hasTangent ? 4 : 0) + (hasColor ? 1 : 0) + entityIndexSizeF;
+        var entityIndexSizeF = dynamic ? boneComponentSize : 0;
+        var batchVertSizeF = 3 + (hasNormal ? 3 : 0) + (hasUv ? 2 : 0) +  (hasUv2 ? 2 : 0) + (hasTangent ? 4 : 0) + (hasColor ? 1 : 0) + (hasBlendWeight ? boneComponentSize : 0) + entityIndexSizeF;
         var batchOffsetNF = 3;
         var batchOffsetUF = hasNormal ? 3 * 2 : 3;
         var batchOffsetU2F = (hasNormal ? 3 * 2 : 3) + (hasUv ? 2 : 0);
         var batchOffsetTF = (hasNormal ? 3 * 2 : 3) + (hasUv ? 2 : 0) + (hasUv2 ? 2 : 0);
         var batchOffsetCF = (hasNormal ? 3 * 2 : 3) + (hasUv ? 2 : 0) + (hasUv2 ? 2 : 0) + (hasTangent ? 4 : 0);
-        var batchOffsetEF = (hasNormal ? 3 * 2 : 3) + (hasUv ? 2 : 0) + (hasUv2 ? 2 : 0) + (hasTangent ? 4 : 0) + (hasColor ? 1 : 0);
-
+		var batchOffsetBF = (hasNormal ? 3 * 2 : 3) + (hasUv ? 2 : 0) + (hasUv2 ? 2 : 0) + (hasTangent ? 4 : 0) + (hasColor ? 1 : 0);
+		var batchOffsetEF = (hasNormal ? 3 * 2 : 3) + (hasUv ? 2 : 0) + (hasUv2 ? 2 : 0) + (hasTangent ? 4 : 0) + (hasColor ? 1 : 0) + (hasBlendWeight ? boneComponentSize : 0);
+		
         var arrayBuffer = new ArrayBuffer(batchNumVerts * batchVertSizeF * 4);
         var batchData = new Float32Array(arrayBuffer);
         var batchData8 = new Uint8Array(arrayBuffer);
@@ -706,13 +814,14 @@ pc.extend(pc, function () {
         var verticesOffset = 0;
         var indexOffset = 0;
         var vbOffset = 0;
-        var offsetPF, offsetNF, offsetUF, offsetU2F, offsetTF, offsetCF;
+        var offsetPF, offsetNF, offsetUF, offsetU2F, offsetTF, offsetCF, offsetBF, offsetBI;
         var transform, vec, vecData;
         if (!dynamic) {
             vec = new pc.Vec3();
             vecData = vec.data;
         }
 
+		var dynIndexCount = 0;
         for (i = 0; i < meshInstances.length; i++) {
             mesh = meshInstances[i].mesh;
             elems = mesh.vertexBuffer.format.elements;
@@ -732,11 +841,21 @@ pc.extend(pc, function () {
                     offsetTF = elems[j].offset / 4;
                 } else if (elems[j].name === pc.SEMANTIC_COLOR) {
                     offsetCF = elems[j].offset / 4;
-                }
+                } else if (elems[j].name === pc.SEMANTIC_BLENDWEIGHT) {
+					offsetBF = elems[j].offset / 4;
+				} else if (elems[j].name === pc.SEMANTIC_BLENDINDICES) {
+					offsetBI = elems[j].offset / 4;
+				}
+				
             }
             data = new Float32Array(mesh.vertexBuffer.storage);
             data8 = new Uint8Array(mesh.vertexBuffer.storage);
+			
+			var b;
+			var bi;
+			
             if (dynamic) {
+				
                 // Dynamic: store mesh instances without transformation (will be applied later in the shader)
                 for (j = 0; j < numVerts; j++) {
                     batchData[j * batchVertSizeF + vbOffset] =     data[j * vertSizeF + offsetPF];
@@ -768,8 +887,25 @@ pc.extend(pc, function () {
                         batchData8[j * batchVertSizeF * 4 + vbOffset * 4 + batchOffsetCF * 4 + 2] = data8[j * vertSizeF * 4 + offsetCF * 4 + 2];
                         batchData8[j * batchVertSizeF * 4 + vbOffset * 4 + batchOffsetCF * 4 + 3] = data8[j * vertSizeF * 4 + offsetCF * 4 + 3];
                     }
-                    batchData[j * batchVertSizeF + batchOffsetEF + vbOffset] = i;
+					if (hasBlendWeight) {
+						for (bi =0; bi < boneComponentSize; bi++) {
+							batchData[j * batchVertSizeF + vbOffset + batchOffsetBF+ bi] =  data[j * vertSizeF + offsetBF + bi];
+						}
+					}
+					
+					if ( isSkin ) {
+						
+						for (bi =0; bi < boneComponentSize; bi++) {
+							batchData[j * batchVertSizeF + batchOffsetEF + vbOffset + bi] =  dynIndexCount + data[j * vertSizeF + offsetBI + bi];
+						}
+						
+					}
+					else {
+						batchData[j * batchVertSizeF + batchOffsetEF + vbOffset] = dynIndexCount;
+					}
                 }
+				
+				dynIndexCount+= isSkin ? meshInstances[i].skinInstance.bones.length :  1;
             } else {
                 // Static: pre-transform vertices
                 transform = meshInstances[i].node.getWorldTransform();
@@ -835,7 +971,8 @@ pc.extend(pc, function () {
         if (hasUv2)     vertexFormatId |= 1 << 3;
         if (hasTangent) vertexFormatId |= 1 << 4;
         if (hasColor)   vertexFormatId |= 1 << 5;
-        if (dynamic)    vertexFormatId |= 1 << 6;
+		if (hasBlendWeight)   vertexFormatId |= 1 << 6;
+        if (dynamic)    vertexFormatId |= (hasBlendWeight ? (1 << 7) : ( 1 << 6) );
         var vertexFormat = this.vertexFormats[vertexFormatId];
         if (!vertexFormat) {
             var formatDesc = [];
@@ -885,10 +1022,18 @@ pc.extend(pc, function () {
                     normalize: true
                 });
             }
+			if (hasBlendWeight) {
+                formatDesc.push({
+                    semantic: pc.SEMANTIC_BLENDWEIGHT,
+                    components: boneComponentSize,
+                    type: pc.ELEMENTTYPE_FLOAT32,
+                    normalize: false
+                });
+            }
             if (dynamic) {
                 formatDesc.push({
                     semantic: pc.SEMANTIC_BLENDINDICES,
-                    components: 1,
+                    components: boneComponentSize,
                     type: pc.ELEMENTTYPE_FLOAT32,
                     normalize: false
                 });
@@ -913,9 +1058,9 @@ pc.extend(pc, function () {
         if (dynamic) {
             // Patch the material
             material = material.clone();
-            material.chunks.transformVS = this.transformVS;
-            material.chunks.skinTexVS = this.skinTexVS;
-            material.chunks.skinConstVS = this.skinConstVS;
+            material.chunks.transformVS = this.boneLimit + "#define DYNAMICBATCH\n" + (material.chunks.transformVS ? material.chunks.transformVS : pc.shaderChunks.transformVS);
+			material.chunks.skinTexVS = (material.chunks.skinBatchTexVS ? material.chunks.skinBatchTexVS : pc.shaderChunks.skinBatchTexVS);
+			material.chunks.skinConstVS = (material.chunks.skinBatchConstVS ? material.chunks.skinBatchConstVS : pc.shaderChunks.skinBatchConstVS);
             material.update();
         }
 
@@ -932,10 +1077,25 @@ pc.extend(pc, function () {
         if (dynamic) {
             // Create skinInstance
             var nodes = [];
-            for (i = 0; i < batch.origMeshInstances.length; i++) {
-                nodes.push(batch.origMeshInstances[i].node);
-            }
-            meshInstance.skinInstance = new SkinBatchInstance(this.device, nodes, this.rootNode);
+			if (!isSkin) {
+				for (i = 0; i < batch.origMeshInstances.length; i++) {
+					nodes.push(batch.origMeshInstances[i].node);
+				}
+				meshInstance.skinInstance = new SkinBatchInstance(this.device, nodes, this.rootNode);
+			}
+			else {   // Animated Skin case
+				var inverseBindPoses = [];
+				
+				for (i = 0; i < batch.origMeshInstances.length; i++) {
+					var bonesToAdd = meshInstances[i].skinInstance.bones;
+					for (b = 0; b <  bonesToAdd.length; b++) {
+						nodes.push(bonesToAdd[b]);
+					}
+					inverseBindPoses.push( {boneCount: bonesToAdd.length, pose:meshInstances[i].skinInstance.skin.inverseBindPose } );
+				}
+				meshInstance.skinInstance = new SkinInstancesBatched(this.device, nodes, this.rootNode, inverseBindPoses);
+			}
+           
         }
 
         meshInstance._updateAabb = false;
