@@ -558,6 +558,19 @@ pc.extend(pc, function () {
         }
         return false;
     }
+	
+	function getVertexFormatComponentSize(vertexFormat, formatName) {
+		for (var elem in vertexFormat.elements) {
+			if (elem.name === formatName) {
+				return elem.numComponents;
+			}
+		}
+		return 0;
+	}
+	
+	function getMeshInstanceBonesCount(meshInstance) {
+		return meshInstance.skinInstance instanceof pc.SkinInstance ? meshInstance.skinInstance.bones.length : 1;
+	}
 
     /**
      * @function
@@ -585,7 +598,7 @@ pc.extend(pc, function () {
         var maxInstanceCount = this.device.supportsBoneTextures ? 1024 : this.device.boneLimit;
 
         var i;
-        var material, layer, vertCount, params, params2, param, paramFailed, lightList, defs;
+        var material, layer, vertCount, params, params2, param, paramFailed, lightList, defs, isSkin, blendWeightSize;
         var aabb = new pc.BoundingBox();
         var testAabb = new pc.BoundingBox();
 
@@ -595,9 +608,11 @@ pc.extend(pc, function () {
         var meshInstancesLeftB;
 
         var k;
-
+		var bonesCount;
+		
         while (meshInstancesLeftA.length > 0) {
             lists[j] = [];
+			bonesCount = 0;
             meshInstancesLeftB = [];
             material = meshInstancesLeftA[0].material;
             layer = meshInstancesLeftA[0].layer;
@@ -606,7 +621,9 @@ pc.extend(pc, function () {
             lightList = meshInstancesLeftA[0]._staticLightList;
             vertCount = meshInstancesLeftA[0].mesh.vertexBuffer.getNumVertices();
             aabb.copy(meshInstancesLeftA[0].aabb);
-
+			isSkin = (meshInstancesLeftA[0].skinInstance instanceof pc.SkinInstance);
+			blendWeightSize = getVertexFormatComponentSize(meshInstancesLeftA[0].mesh.vertexBuffer.format, pc.SEMANTIC_BLENDWEIGHT);
+			
             for (i = 0; i < meshInstancesLeftA.length; i++) {
 
                 if (i > 0) {
@@ -689,14 +706,36 @@ pc.extend(pc, function () {
                             continue;
                         }
                     }
+					
+					// Split by skin vs non-skinned
+					if (isSkin !== (meshInstancesLeftA[i].skinInstance instanceof pc.SkinInstance) ) {
+						meshInstancesLeftB.push(meshInstancesLeftA[i]);
+						continue;
+					}
+					// Split by blend weight's number of components (component size)
+					if (blendWeightSize !== getVertexFormatComponentSize(meshInstancesLeftA[0].mesh.vertexBuffer.format, pc.SEMANTIC_BLENDWEIGHT) ) {
+						meshInstancesLeftB.push(meshInstancesLeftA[i]);
+						continue;
+					}
                 }
+				
+				// Pre-Ignore skin batching if skin has too many bones
+				if (dynamic && (meshInstancesLeftA[i].skinInstance instanceof pc.SkinInstance) &&  getMeshInstanceBonesCount(meshInstancesLeftA[i])  > maxInstanceCount ) {
+					if (i === meshInstancesLeftA.length) {
+                        meshInstancesLeftB = [];
+                    } else {
+                        meshInstancesLeftB = meshInstancesLeftA.slice(i + 1);
+                    }
+					break;
+				}
 
                 aabb.add(meshInstancesLeftA[i].aabb);
                 vertCount += meshInstancesLeftA[i].mesh.vertexBuffer.getNumVertices();
                 lists[j].push(meshInstancesLeftA[i]);
+				bonesCount += !isSkin ? 1 : meshInstancesLeftA[i].skinInstance.bones.length;
 
-                // Split by instance number
-                if (dynamic && lists[j].length === maxInstanceCount) {
+                // Split by instance number ...or if bones count will exceed in next iteration
+                if (dynamic && (lists[j].length === maxInstanceCount || (i < meshInstancesLeftA[i].length - 1 && bonesCount + getMeshInstanceBonesCount(meshInstancesLeftA[i+1]) > bonesCount ) ) ) {
                     if (i === meshInstancesLeftA.length) {
                         meshInstancesLeftB = [];
                     } else {
@@ -704,6 +743,7 @@ pc.extend(pc, function () {
                     }
                     break;
                 }
+				
             }
             j++;
             meshInstancesLeftA = meshInstancesLeftB;
@@ -816,6 +856,9 @@ pc.extend(pc, function () {
         var vbOffset = 0;
         var offsetPF, offsetNF, offsetUF, offsetU2F, offsetTF, offsetCF, offsetBF, offsetBI;
         var transform, vec, vecData;
+		var b;
+		var bi;
+		
         if (!dynamic) {
             vec = new pc.Vec3();
             vecData = vec.data;
@@ -850,9 +893,6 @@ pc.extend(pc, function () {
             }
             data = new Float32Array(mesh.vertexBuffer.storage);
             data8 = new Uint8Array(mesh.vertexBuffer.storage);
-			
-			var b;
-			var bi;
 			
             if (dynamic) {
 				
