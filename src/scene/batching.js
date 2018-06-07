@@ -719,23 +719,30 @@ pc.extend(pc, function () {
 					}
                 }
 				
-				// Pre-Ignore skin batching if skin has too many bones
-				if (dynamic && (meshInstancesLeftA[i].skinInstance instanceof pc.SkinInstance) &&  getMeshInstanceBonesCount(meshInstancesLeftA[i])  > maxInstanceCount ) {
-					if (i === meshInstancesLeftA.length) {
-                        meshInstancesLeftB = [];
-                    } else {
-                        meshInstancesLeftB = meshInstancesLeftA.slice(i + 1);
+		// Ignore/split skin batching if skin has too many bones
+		if (dynamic && (meshInstancesLeftA[i].skinInstance instanceof pc.SkinInstance) )  {
+                    var curBoneCount =  getMeshInstanceBonesCount(meshInstancesLeftA[i]);
+                    if (curBoneCount > maxInstanceCount) { 
+                        if (i === meshInstancesLeftA.length) {
+                            meshInstancesLeftB = [];
+                        } else {
+                            meshInstancesLeftB = meshInstancesLeftA.slice(i + 1);
+                        }
+                        break;
                     }
-					break;
-				}
+                    else if (curBoneCount + bonesCount > maxInstanceCount) {
+                        meshInstancesLeftB.push(meshInstancesLeftA[i]);
+                        continue;
+                    }
+		}
 
                 aabb.add(meshInstancesLeftA[i].aabb);
                 vertCount += meshInstancesLeftA[i].mesh.vertexBuffer.getNumVertices();
                 lists[j].push(meshInstancesLeftA[i]);
-				bonesCount += !isSkin ? 1 : meshInstancesLeftA[i].skinInstance.bones.length;
+		bonesCount += !isSkin ? 1 : meshInstancesLeftA[i].skinInstance.bones.length;
 
-                // Split by instance number ...or if bones count will exceed in next iteration
-                if (dynamic && (lists[j].length === maxInstanceCount || (i < meshInstancesLeftA[i].length - 1 && bonesCount + getMeshInstanceBonesCount(meshInstancesLeftA[i+1]) > bonesCount ) ) ) {
+                // Split by instance number
+                if (dynamic && (lists[j].length === maxInstanceCount) ) {
                     if (i === meshInstancesLeftA.length) {
                         meshInstancesLeftB = [];
                     } else {
