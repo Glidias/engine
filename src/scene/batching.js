@@ -612,7 +612,7 @@ pc.extend(pc, function () {
 		
         while (meshInstancesLeftA.length > 0) {
             lists[j] = [];
-			bonesCount = 0;
+            bonesCount = 0;
             meshInstancesLeftB = [];
             material = meshInstancesLeftA[0].material;
             layer = meshInstancesLeftA[0].layer;
@@ -621,8 +621,8 @@ pc.extend(pc, function () {
             lightList = meshInstancesLeftA[0]._staticLightList;
             vertCount = meshInstancesLeftA[0].mesh.vertexBuffer.getNumVertices();
             aabb.copy(meshInstancesLeftA[0].aabb);
-			isSkin = (meshInstancesLeftA[0].skinInstance instanceof pc.SkinInstance);
-			blendWeightSize = getVertexFormatComponentSize(meshInstancesLeftA[0].mesh.vertexBuffer.format, pc.SEMANTIC_BLENDWEIGHT);
+	    isSkin = (meshInstancesLeftA[0].skinInstance instanceof pc.SkinInstance);
+	    blendWeightSize = getVertexFormatComponentSize(meshInstancesLeftA[0].mesh.vertexBuffer.format, pc.SEMANTIC_BLENDWEIGHT);
 			
             for (i = 0; i < meshInstancesLeftA.length; i++) {
 
@@ -707,16 +707,16 @@ pc.extend(pc, function () {
                         }
                     }
 					
-					// Split by skin vs non-skinned
-					if (isSkin !== (meshInstancesLeftA[i].skinInstance instanceof pc.SkinInstance) ) {
-						meshInstancesLeftB.push(meshInstancesLeftA[i]);
-						continue;
-					}
-					// Split by blend weight's number of components (component size)
-					if (blendWeightSize !== getVertexFormatComponentSize(meshInstancesLeftA[0].mesh.vertexBuffer.format, pc.SEMANTIC_BLENDWEIGHT) ) {
-						meshInstancesLeftB.push(meshInstancesLeftA[i]);
-						continue;
-					}
+                    // Split by skin vs non-skinned
+                    if (isSkin !== (meshInstancesLeftA[i].skinInstance instanceof pc.SkinInstance) ) {
+			meshInstancesLeftB.push(meshInstancesLeftA[i]);
+			continue;
+                    }
+                    // Split by blend weight's number of components (component size)
+                    if (blendWeightSize !== getVertexFormatComponentSize(meshInstancesLeftA[0].mesh.vertexBuffer.format, pc.SEMANTIC_BLENDWEIGHT) ) {
+	                meshInstancesLeftB.push(meshInstancesLeftA[i]);
+	                continue;
+                    }
                 }
 				
 		// Ignore/split skin batching if skin has too many bones
