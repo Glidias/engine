@@ -60,46 +60,6 @@ pc.programlib.basic = {
             code += 'uniform vec4 camera_params;\n\n';
             code += '#endif\n';
         }
-		
-		if (options.chunks) {
-            var customChunks = {};
-            var newP;
-			var p;
-            for (p in chunks) {
-                if (chunks.hasOwnProperty(p)) {
-                    if (!options.chunks[p]) {
-                        customChunks[p] = chunks[p];
-                    } else {
-                        chunk = options.chunks[p];
-                        // scan for attributes in custom code
-                        if (chunk.indexOf("vertex_normal") >= 0) {
-                            attributes.vertex_normal = pc.SEMANTIC_NORMAL;
-                        }
-                        if (chunk.indexOf("vertex_tangent") >= 0) {
-                            attributes.vertex_tangent = pc.SEMANTIC_TANGENT;
-                        }
-                        if (chunk.indexOf("vertex_texCoord0") >= 0) {
-                            attributes.vertex_texCoord0 = pc.SEMANTIC_TEXCOORD0;
-                        }
-                        if (chunk.indexOf("vertex_texCoord1") >= 0) {
-                            attributes.vertex_texCoord1 = pc.SEMANTIC_TEXCOORD1;
-                        }
-                        if (chunk.indexOf("vertex_color") >= 0) {
-                            attributes.vertex_color = pc.SEMANTIC_COLOR;
-                        }
-                        if (chunk.indexOf("vertex_boneWeights") >= 0) {
-                            attributes.vertex_boneWeights = pc.SEMANTIC_BLENDWEIGHT;
-                        }
-                        if (chunk.indexOf("vertex_boneIndices") >= 0) {
-                            attributes.vertex_boneIndices = pc.SEMANTIC_BLENDINDICES;
-                        }
-                        customChunks[p] = chunk;
-                    }
-                }
-            }
-
-            chunks = customChunks;
-        }
 
         // VERTEX SHADER BODY
         code += pc.programlib.begin();
@@ -135,7 +95,7 @@ pc.programlib.basic = {
             code += 'uniform sampler2D texture_diffuseMap;\n';
         }
         if (options.fog) {
-            code += pc.programlib.fogCode(options.fog, chunks);
+            code += pc.programlib.fogCode(options.fog);
         }
         if (options.alphatest) {
             code += chunks.alphaTestPS;
