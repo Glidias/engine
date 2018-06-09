@@ -1,4 +1,4 @@
-pc.extend(pc, function () {
+Object.assign(pc, function () {
     'use strict';
 
     var EVENT_RESIZE = 'resizecanvas';
@@ -570,7 +570,7 @@ pc.extend(pc, function () {
         }).call(this);
     };
 
-    GraphicsDevice.prototype = {
+    Object.assign(GraphicsDevice.prototype, {
         getPrecision: function () {
             var gl = this.gl;
             var precision = "highp";
@@ -1006,6 +1006,9 @@ pc.extend(pc, function () {
         updateBegin: function () {
             var gl = this.gl;
 
+            this.boundBuffer = null;
+            this.indexBuffer = null;
+
             // Set the render target
             var target = this.renderTarget;
             if (target) {
@@ -1139,6 +1142,10 @@ pc.extend(pc, function () {
                 }
             } else {
                 this.setFramebuffer(null);
+            }
+
+            for (var i = 0; i < 16; i++) {
+                this.textureUnits[i] = null;
             }
         },
 
@@ -2749,7 +2756,7 @@ pc.extend(pc, function () {
                 this.gl.deleteTransformFeedback(this.feedback);
             }
         }
-    };
+    });
 
     /**
      * @readonly
