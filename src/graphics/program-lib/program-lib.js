@@ -24,7 +24,7 @@ pc.programlib = {
     },
 
     fogCode: function (value, chunks) {
-         if (!chunks) chunks = pc.shaderChunks;
+        if (!chunks) chunks = pc.shaderChunks;
         if (value === 'linear') {
             return chunks.fogLinearPS ? chunks.fogLinearPS : pc.shaderChunks.fogLinearPS;
         } else if (value === 'exp') {
