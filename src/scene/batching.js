@@ -1102,9 +1102,9 @@ Object.assign(pc, function () {
         if (dynamic) {
             // Patch the material
             material = material.clone();
-            material.chunks.transformVS = this.boneLimit + "#define DYNAMICBATCH\n" + (material.chunks.transformVS ? material.chunks.transformVS : pc.shaderChunks.transformVS);
-            material.chunks.skinTexVS = (material.chunks.skinBatchTexVS ? material.chunks.skinBatchTexVS : pc.shaderChunks.skinBatchTexVS);
-            material.chunks.skinConstVS = (material.chunks.skinBatchConstVS ? material.chunks.skinBatchConstVS : pc.shaderChunks.skinBatchConstVS);
+            material.chunks.transformVS = this.boneLimit + "#define "+(!isSkin ? "DYNAMICBATCH" : "SKIN")+"\n" + (material.chunks.transformVS ? material.chunks.transformVS : pc.shaderChunks.transformVS);
+			if (!isSkin) material.chunks.skinTexVS = (material.chunks.skinBatchTexVS ? material.chunks.skinBatchTexVS : pc.shaderChunks.skinBatchTexVS);
+			if (!isSkin) material.chunks.skinConstVS = (material.chunks.skinBatchConstVS ? material.chunks.skinBatchConstVS : pc.shaderChunks.skinBatchConstVS);
             material.update();
         }
 
