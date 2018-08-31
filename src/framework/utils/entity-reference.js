@@ -165,10 +165,11 @@ Object.assign(pc, function () {
         },
 
         _toggleLifecycleListeners: function (onOrOff) {
-            this._parentComponent[onOrOff]('set_' + this._entityPropertyName, this._onSetEntityGuid, this);
+            this._parentComponent[onOrOff]('set_' + this._entityPropertyName, this._onSetEntity, this);
             this._parentComponent.system[onOrOff]('beforeremove', this._onParentComponentRemove, this);
 
             pc.ComponentSystem[onOrOff]('postInitialize', this._onPostInitialize, this);
+            this._app.on('tools:sceneloaded', this._onSceneLoaded, this);
 
             // For any event listeners that relate to the gain/loss of a component, register
             // listeners that will forward the add/remove component events
@@ -199,14 +200,18 @@ Object.assign(pc, function () {
             }
         },
 
-        _onSetEntityGuid: function (name, oldGuid, newGuid) {
-            if (newGuid !== null && newGuid !== undefined && typeof newGuid !== 'string') {
-                console.warn("Entity field `" + this._entityPropertyName + "` was set to unexpected type '" + (typeof newGuid) + "'");
-                return;
-            }
-
-            if (oldGuid !== newGuid) {
+        _onSetEntity: function (name, oldValue, newValue) {
+            if (newValue instanceof pc.Entity) {
                 this._updateEntityReference();
+            } else  {
+                if (newValue !== null && newValue !== undefined && typeof newValue !== 'string') {
+                    console.warn("Entity field `" + this._entityPropertyName + "` was set to unexpected type '" + (typeof newValue) + "'");
+                    return;
+                }
+
+                if (oldValue !== newValue) {
+                    this._updateEntityReference();
+                }
             }
         },
 
@@ -214,9 +219,43 @@ Object.assign(pc, function () {
             this._updateEntityReference();
         },
 
+        /**
+         * Must be called from the parent component's onEnable() method in order for entity
+         * references to be correctly resolved when {@link pc.Entity#clone} is called.
+         */
+        onParentComponentEnable: function () {
+            // When an entity is cloned via the JS API, we won't be able to resolve the
+            // entity reference until the cloned entity has been added to the scene graph.
+            // We can detect this by waiting for the parent component to be enabled, in the
+            // specific case where we haven't yet been able to resolve an entity reference.
+            if (!this._entity) {
+                this._updateEntityReference();
+            }
+        },
+
+        // When running within the editor, postInitialize is fired before the scene graph
+        // has been fully constructed. As such we use the special tools:sceneloaded event
+        // in order to know when the graph is ready to traverse.
+        _onSceneLoaded: function () {
+            this._updateEntityReference();
+        },
+
         _updateEntityReference: function () {
             var nextEntityGuid = this._parentComponent.data[this._entityPropertyName];
-            var nextEntity = nextEntityGuid ? this._parentComponent.system.app.root.findByGuid(nextEntityGuid) : null;
+            var nextEntity;
+
+            if (nextEntityGuid instanceof pc.Entity) {
+                // if value is set to a Entity itself replace value with the GUID
+                nextEntity = nextEntityGuid;
+                nextEntityGuid = nextEntity.getGuid();
+                this._parentComponent.data[this._entityPropertyName] = nextEntityGuid;
+            } else {
+                var root = this._parentComponent.system.app.root;
+                var isOnSceneGraph = this._parentComponent.entity.isDescendantOf(root);
+
+                nextEntity = (isOnSceneGraph && nextEntityGuid) ? root.findByGuid(nextEntityGuid) : null;
+            }
+
             var hasChanged = this._entity !== nextEntity;
 
             if (hasChanged) {

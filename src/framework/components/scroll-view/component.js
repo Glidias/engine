@@ -28,6 +28,8 @@ Object.assign(pc, function () {
      * @property {pc.Entity} verticalScrollbarEntity The entity to be used as the vertical scrollbar. This entity must have a Scrollbar component.
      */
     var ScrollViewComponent = function ScrollViewComponent(system, entity) {
+        pc.Component.call(this, system, entity);
+
         this._viewportReference = new pc.EntityReference(this, 'viewportEntity', {
             'element#gain': this._onViewportElementGain,
             'element#resize': this._onSetContentOrViewportSize
@@ -50,13 +52,18 @@ Object.assign(pc, function () {
             'scrollbar#gain': this._onVerticalScrollbarGain
         });
 
+        this._prevContentSizes = {};
+        this._prevContentSizes[pc.ORIENTATION_HORIZONTAL] = null;
+        this._prevContentSizes[pc.ORIENTATION_VERTICAL] = null;
+
         this._scroll = new pc.Vec2();
         this._velocity = new pc.Vec3();
 
         this._toggleLifecycleListeners('on', system);
         this._toggleElementListeners('on');
     };
-    ScrollViewComponent = pc.inherits(ScrollViewComponent, pc.Component);
+    ScrollViewComponent.prototype = Object.create(pc.Component.prototype);
+    ScrollViewComponent.prototype.constructor = ScrollViewComponent;
 
     Object.assign(ScrollViewComponent.prototype, {
         _toggleLifecycleListeners: function (onOrOff, system) {
@@ -105,6 +112,9 @@ Object.assign(pc, function () {
             this._contentDragHelper.on('drag:end', this._onContentDragEnd, this);
             this._contentDragHelper.on('drag:move', this._onContentDragMove, this);
 
+            this._prevContentSizes[pc.ORIENTATION_HORIZONTAL] = null;
+            this._prevContentSizes[pc.ORIENTATION_VERTICAL] = null;
+
             this._syncAll();
         },
 
@@ -129,14 +139,12 @@ Object.assign(pc, function () {
 
         _onSetHorizontalScrollbarValue: function (scrollValueX) {
             if (!this._scrollbarUpdateFlags[pc.ORIENTATION_HORIZONTAL] && this.enabled && this.entity.enabled) {
-                this._velocity.set(0, 0, 0);
                 this._onSetScroll(scrollValueX, null);
             }
         },
 
         _onSetVerticalScrollbarValue: function (scrollValueY) {
             if (!this._scrollbarUpdateFlags[pc.ORIENTATION_VERTICAL] && this.enabled && this.entity.enabled) {
-                this._velocity.set(0, 0, 0);
                 this._onSetScroll(null, scrollValueY);
             }
         },
@@ -159,7 +167,11 @@ Object.assign(pc, function () {
             this._syncScrollbarPosition(pc.ORIENTATION_VERTICAL);
         },
 
-        _onSetScroll: function (x, y) {
+        _onSetScroll: function (x, y, resetVelocity) {
+            if (resetVelocity !== false) {
+                this._velocity.set(0, 0, 0);
+            }
+
             var hasChanged = false;
             hasChanged |= this._updateAxis(x, 'x', pc.ORIENTATION_HORIZONTAL);
             hasChanged |= this._updateAxis(y, 'y', pc.ORIENTATION_VERTICAL);
@@ -220,10 +232,27 @@ Object.assign(pc, function () {
             var contentEntity = this._contentReference.entity;
 
             if (contentEntity) {
-                var offset = this._scroll[axis] *  this._getMaxOffset(orientation);
+                var prevContentSize = this._prevContentSizes[orientation];
+                var currContentSize = this._getContentSize(orientation);
+
+                // If the content size has changed, adjust the scroll value so that the content will
+                // stay in the same place from the user's perspective.
+                if (prevContentSize !== null && Math.abs(prevContentSize - currContentSize) > 1e-4) {
+                    var prevMaxOffset = this._getMaxOffset(orientation, prevContentSize);
+                    var currMaxOffset = this._getMaxOffset(orientation, currContentSize);
+                    if (currMaxOffset === 0) {
+                        this._scroll[axis] = 1;
+                    } else {
+                        this._scroll[axis] = pc.math.clamp(this._scroll[axis] * prevMaxOffset / currMaxOffset, 0, 1);
+                    }
+                }
+
+                var offset = this._scroll[axis] * this._getMaxOffset(orientation);
                 var contentPosition = contentEntity.getLocalPosition();
                 contentPosition[axis] = offset * sign;
                 contentEntity.setLocalPosition(contentPosition);
+
+                this._prevContentSizes[orientation] = currContentSize;
             }
         },
 
@@ -280,9 +309,10 @@ Object.assign(pc, function () {
             );
         },
 
-        _getMaxOffset: function (orientation) {
+        _getMaxOffset: function (orientation, contentSize) {
+            contentSize = contentSize === undefined ? this._getContentSize(orientation) : contentSize;
+
             var viewportSize = this._getViewportSize(orientation);
-            var contentSize = this._getContentSize(orientation);
 
             if (contentSize < viewportSize) {
                 return -this._getViewportSize(orientation);
@@ -443,7 +473,7 @@ Object.assign(pc, function () {
 
         _setScrollFromContentPosition: function (position) {
             var scrollValue = this._contentPositionToScrollValue(position);
-            this._onSetScroll(scrollValue.x, scrollValue.y);
+            this._onSetScroll(scrollValue.x, scrollValue.y, false);
         },
 
         _isDragging: function () {
@@ -467,6 +497,10 @@ Object.assign(pc, function () {
         },
 
         onEnable: function () {
+            this._viewportReference.onParentComponentEnable();
+            this._contentReference.onParentComponentEnable();
+            this._scrollbarReferences[pc.ORIENTATION_HORIZONTAL].onParentComponentEnable();
+            this._scrollbarReferences[pc.ORIENTATION_VERTICAL].onParentComponentEnable();
             this._setScrollbarComponentsEnabled(true);
             this._setContentDraggingEnabled(true);
 

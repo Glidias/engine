@@ -14,21 +14,28 @@ Object.assign(pc, function () {
      * @property {pc.Entity} handleEntity The entity to be used as the scrollbar handle. This entity must have a Scrollbar component.
      */
     var ScrollbarComponent = function ScrollbarComponent(system, entity) {
+        pc.Component.call(this, system, entity);
+
         this._app = system.app;
 
         this._handleReference = new pc.EntityReference(this, 'handleEntity', {
             'element#gain': this._onHandleElementGain,
-            'element#lose': this._onHandleElementLose
+            'element#lose': this._onHandleElementLose,
+            'element#set:anchor': this._onSetHandleAlignment,
+            'element#set:margin': this._onSetHandleAlignment,
+            'element#set:pivot': this._onSetHandleAlignment
         });
 
         this._toggleLifecycleListeners('on');
     };
-    ScrollbarComponent = pc.inherits(ScrollbarComponent, pc.Component);
+    ScrollbarComponent.prototype = Object.create(pc.Component.prototype);
+    ScrollbarComponent.prototype.constructor = ScrollbarComponent;
 
     Object.assign(ScrollbarComponent.prototype, {
         _toggleLifecycleListeners: function (onOrOff) {
             this[onOrOff]('set_value', this._onSetValue, this);
             this[onOrOff]('set_handleSize', this._onSetHandleSize, this);
+            this[onOrOff]('set_orientation', this._onSetOrientation, this);
 
             // TODO Handle scrollwheel events
         },
@@ -63,6 +70,16 @@ Object.assign(pc, function () {
             if (Math.abs(newValue - oldValue) > 1e-5) {
                 this.data.handleSize = pc.math.clamp(newValue, 0, 1);
                 this._updateHandlePositionAndSize();
+            }
+        },
+
+        _onSetHandleAlignment: function () {
+            this._updateHandlePositionAndSize();
+        },
+
+        _onSetOrientation: function (name, oldValue, newValue) {
+            if (newValue !== oldValue && this._handleReference.hasComponent('element')) {
+                this._handleReference.entity.element[this._getOppositeDimension()] = 0;
             }
         },
 
@@ -121,6 +138,10 @@ Object.assign(pc, function () {
             return this.orientation === pc.ORIENTATION_HORIZONTAL ? 'width' : 'height';
         },
 
+        _getOppositeDimension: function () {
+            return this.orientation === pc.ORIENTATION_HORIZONTAL ? 'height' : 'width';
+        },
+
         _destroyDragHelper: function () {
             if (this._handleDragHelper) {
                 this._handleDragHelper.destroy();
@@ -134,6 +155,7 @@ Object.assign(pc, function () {
         },
 
         onEnable: function () {
+            this._handleReference.onParentComponentEnable();
             this._setHandleDraggingEnabled(true);
         },
 

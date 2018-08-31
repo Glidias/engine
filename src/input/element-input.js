@@ -118,6 +118,8 @@ Object.assign(pc, function () {
      * @property {Number} wheel The amount of the wheel movement
      */
     var ElementMouseEvent = function (event, element, camera, x, y, lastX, lastY) {
+        ElementInputEvent.call(this, event, element, camera);
+
         this.x = x;
         this.y = y;
 
@@ -146,8 +148,8 @@ Object.assign(pc, function () {
             this.wheel = 0;
         }
     };
-
-    ElementMouseEvent = pc.inherits(ElementMouseEvent, ElementInputEvent);
+    ElementMouseEvent.prototype = Object.create(ElementInputEvent.prototype);
+    ElementMouseEvent.prototype.constructor = ElementMouseEvent;
 
     /**
      * @constructor
@@ -165,13 +167,15 @@ Object.assign(pc, function () {
      * @property {Touch[]} changedTouches The Touch objects representing individual points of contact whose states changed between the previous touch event and this one.
      */
     var ElementTouchEvent = function (event, element, camera, x, y, input) {
+        ElementInputEvent.call(this, event, element, camera);
+
         this.touches = event.touches;
         this.changedTouches = event.changedTouches;
         this.x = x;
         this.y = y;
     };
-
-    ElementTouchEvent = pc.inherits(ElementTouchEvent, ElementInputEvent);
+    ElementTouchEvent.prototype = Object.create(ElementInputEvent.prototype);
+    ElementTouchEvent.prototype.constructor = ElementTouchEvent;
 
     /**
      * @constructor
@@ -397,8 +401,8 @@ Object.assign(pc, function () {
                 }
             }
 
-            for (var touch in newTouchedElements) { 
-                this._touchedElements[touch] = newTouchedElements[touch]; 
+            for (var touchId in newTouchedElements) {
+                this._touchedElements[touchId] = newTouchedElements[touchId];
             }
         },
 
@@ -695,6 +699,12 @@ Object.assign(pc, function () {
         },
 
         _checkElement2d: function (x, y, element, camera) {
+            // ensure click is contained by any mask first
+            if (element.maskedBy) {
+                var result = this._checkElement2d(x, y, element.maskedBy.element, camera);
+                if (!result) return false;
+            }
+
             var sw = this.app.graphicsDevice.width;
             var sh = this.app.graphicsDevice.height;
 
@@ -734,6 +744,12 @@ Object.assign(pc, function () {
         },
 
         _checkElement3d: function (x, y, element, camera) {
+            // ensure click is contained by any mask first
+            if (element.maskedBy) {
+                var result = this._checkElement3d(x, y, element.maskedBy.element, camera);
+                if (!result) return false;
+            }
+
             var sw = this._target.clientWidth;
             var sh = this._target.clientHeight;
 

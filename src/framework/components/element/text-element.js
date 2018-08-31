@@ -37,6 +37,9 @@ Object.assign(pc, function () {
         this._meshInfo = [];
         this._material = null;
 
+        this._aabbDirty = true;
+        this._aabb = new pc.BoundingBox();
+
         this._noResize = false; // flag used to disable resizing events
 
         this._currentMaterialType = null; // save the material type (screenspace or not) to prevent overwriting
@@ -113,18 +116,31 @@ Object.assign(pc, function () {
 
             if (text === undefined) text = this._text;
 
-            var textLength = text.length;
+            var symbols = pc.string.getSymbols(text);
+
+            if (this.rtlReorder) {
+                var rtlReorderFunc = this._system.app.systems.element.getRtlReorder();
+                if (rtlReorderFunc) {
+                    symbols = rtlReorderFunc(symbols);
+                } else {
+                    console.warn('Element created with rtlReorder option but no rtlReorder function registered');
+                }
+            }
+
+            var textLength = symbols.length;
+
             // handle null string
             if (textLength === 0) {
                 textLength = 1;
                 text = " ";
+                symbols = [text];
             }
 
             var charactersPerTexture = {};
 
             for (i = 0; i < textLength; i++) {
-                var code = text.charCodeAt(i);
-                var info = this._font.data.chars[code];
+                var char = symbols[i];
+                var info = this._font.data.chars[char];
                 if (!info) continue;
 
                 var map = info.map;
@@ -196,6 +212,7 @@ Object.assign(pc, function () {
                     var mesh = pc.createMesh(this._system.app.graphicsDevice, meshInfo.positions, { uvs: meshInfo.uvs, normals: meshInfo.normals, indices: meshInfo.indices });
 
                     var mi = new pc.MeshInstance(this._node, mesh, this._material);
+                    mi.name = "Text Element: " + this._entity.name;
                     mi.castShadow = false;
                     mi.receiveShadow = false;
 
@@ -204,7 +221,7 @@ Object.assign(pc, function () {
                         mi.cull = false;
                     }
                     mi.screenSpace = screenSpace;
-                    mi.setParameter("texture_msdfMap", this._font.textures[i]);
+                    this._setTextureParams(mi, this._font.textures[i]);
                     mi.setParameter("material_emissive", this._color.data3);
                     mi.setParameter("material_opacity", this._color.data[3]);
                     mi.setParameter("font_sdfIntensity", this._font.intensity);
@@ -220,15 +237,15 @@ Object.assign(pc, function () {
 
             // after creating new meshes
             // re-apply masking stencil params
-            if (this._maskedBy) {
-                this._element._setMaskedBy(this._maskedBy);
+            if (this._element.maskedBy) {
+                this._element._setMaskedBy(this._element.maskedBy);
             }
 
             if (removedModel && this._element.enabled && this._entity.enabled) {
                 this._element.addModelToLayers(this._model);
             }
 
-            this._updateMeshes(text);
+            this._updateMeshes(symbols);
         },
 
         _removeMeshInstance: function (meshInstance) {
@@ -268,13 +285,9 @@ Object.assign(pc, function () {
         _updateMaterial: function (screenSpace) {
             var cull;
 
-            if (screenSpace) {
-                this._material = this._system.defaultScreenSpaceTextMaterial;
-                cull = false;
-            } else {
-                this._material = this._system.defaultTextMaterial;
-                cull = true;
-            }
+            var msdf = this._font && this._font.type === pc.FONT_MSDF;
+            this._material = this._system.getTextElementMaterial(screenSpace, msdf);
+            cull = !screenSpace;
 
             if (this._model) {
                 for (var i = 0, len = this._model.meshInstances.length; i < len; i++) {
@@ -286,7 +299,7 @@ Object.assign(pc, function () {
             }
         },
 
-        _updateMeshes: function (text) {
+        _updateMeshes: function (symbols) {
             var json = this._font.data;
             var self = this;
 
@@ -295,7 +308,7 @@ Object.assign(pc, function () {
             this._lineWidths = [];
             this._lineContents = [];
 
-            var l = text.length;
+            var l = symbols.length;
             var _x = 0; // cursors
             var _xMinusTrailingWhitespace = 0;
             var _y = 0;
@@ -321,12 +334,12 @@ Object.assign(pc, function () {
             var scale = 1;
             var MAGIC = 32;
 
-            var char, charCode, data, i, quad;
+            var char, charId, data, i, quad;
 
             // TODO: Optimize this as it loops through all the chars in the asset
             // every time the text changes...
-            for (charCode in json.chars) {
-                data = json.chars[charCode];
+            for (charId in json.chars) {
+                data = json.chars[charId];
                 scale = (data.height / MAGIC) * this._fontSize / data.height;
                 if (data.bounds) {
                     fontMinY = Math.min(fontMinY, data.bounds[1] * scale);
@@ -341,7 +354,11 @@ Object.assign(pc, function () {
 
             function breakLine(lineBreakIndex, lineBreakX) {
                 self._lineWidths.push(lineBreakX);
-                self._lineContents.push(text.substring(lineStartIndex, lineBreakIndex));
+                var substring = symbols
+                    .slice(lineStartIndex, lineBreakIndex)
+                    .join('');
+
+                self._lineContents.push(substring);
 
                 _x = 0;
                 _y -= self._lineHeight;
@@ -353,8 +370,7 @@ Object.assign(pc, function () {
             }
 
             for (i = 0; i < l; i++) {
-                char = text.charAt(i);
-                charCode = text.charCodeAt(i);
+                char = symbols[i];
 
                 var x = 0;
                 var y = 0;
@@ -363,7 +379,7 @@ Object.assign(pc, function () {
                 var glyphMinX = 0;
                 var glyphWidth = 0;
 
-                data = json.chars[charCode];
+                data = json.chars[char];
                 if (data && data.scale) {
                     var size = (data.width + data.height) / 2;
                     scale = (size / MAGIC) * this._fontSize / size;
@@ -412,9 +428,21 @@ Object.assign(pc, function () {
                     } else {
                         // Move back to the beginning of the current word.
                         var backtrack = Math.max(i - wordStartIndex, 0);
+                        if (this._meshInfo.length <= 1) {
+                            meshInfo.lines[lines - 1] -= backtrack;
+                            meshInfo.quad -= backtrack;
+                        } else {
+                            // We should only backtrack the quads that were in the word from this same texture
+                            // We will have to update N number of mesh infos as a result (all textures used in the word in question)
+                            for (var j = wordStartIndex; j < i; j++) {
+                                var backChar = symbols[j];
+                                var backCharData = json.chars[backChar];
+                                var backMeshInfo = this._meshInfo[(backCharData && backCharData.map) || 0];
+                                backMeshInfo.lines[lines - 1] -= 1;
+                                backMeshInfo.quad -= 1;
+                            }
+                        }
                         i -= backtrack + 1;
-                        meshInfo.lines[lines - 1] -= backtrack;
-                        meshInfo.quad -= backtrack;
 
                         breakLine(wordStartIndex, wordStartX);
                         continue;
@@ -455,7 +483,7 @@ Object.assign(pc, function () {
                     _xMinusTrailingWhitespace = _x;
                 }
 
-                if (isWordBoundary) {
+                if (isWordBoundary) { // char is space, tab, or dash
                     numWordsThisLine++;
                     wordStartX = _xMinusTrailingWhitespace;
                     wordStartIndex = i + 1;
@@ -463,7 +491,7 @@ Object.assign(pc, function () {
 
                 numCharsThisLine++;
 
-                var uv = this._getUv(charCode);
+                var uv = this._getUv(char);
 
                 meshInfo.uvs[quad * 4 * 2 + 0] = uv[0];
                 meshInfo.uvs[quad * 4 * 2 + 1] = uv[1];
@@ -538,6 +566,9 @@ Object.assign(pc, function () {
                 // force update meshInstance aabb
                 this._meshInfo[i].meshInstance._aabbVer = -1;
             }
+
+            // flag text element aabb to be updated
+            this._aabbDirty = true;
         },
 
         _onFontAdded: function (asset) {
@@ -588,6 +619,20 @@ Object.assign(pc, function () {
 
         },
 
+        _setTextureParams: function (mi, texture) {
+            if (this._font) {
+                if (this._font.type === pc.FONT_MSDF) {
+                    mi.deleteParameter("texture_emissiveMap");
+                    mi.deleteParameter("texture_opacityMap");
+                    mi.setParameter("texture_msdfMap", texture);
+                } else if (this._font.type === pc.FONT_BITMAP) {
+                    mi.deleteParameter("texture_msdfMap");
+                    mi.setParameter("texture_emissiveMap", texture);
+                    mi.setParameter("texture_opacityMap", texture);
+                }
+            }
+        },
+
         _getPxRange: function (font) {
             // calculate pxrange from range and scale properties on a character
             var keys = Object.keys(this._font.data.chars);
@@ -605,8 +650,9 @@ Object.assign(pc, function () {
 
             if (!data.chars[char]) {
                 // missing char - return "space" if we have it
-                if (data.chars[32]) {
-                    return this._getUv(32);
+                var space = ' ';
+                if (data.chars[space]) {
+                    return this._getUv(space);
                 }
                 // otherwise - missing char
                 return [0, 0, 1, 1];
@@ -643,6 +689,16 @@ Object.assign(pc, function () {
             if (this._model) {
                 this._element.removeModelFromLayers(this._model);
             }
+        },
+
+        _setStencil: function (stencilParams) {
+            if (this._model) {
+                var instances = this._model.meshInstances;
+                for (var i = 0; i < instances.length; i++) {
+                    instances[i].stencilFront = stencilParams;
+                    instances[i].stencilBack = stencilParams;
+                }
+            }
         }
     });
 
@@ -653,6 +709,14 @@ Object.assign(pc, function () {
 
         set: function (value) {
             var str = value.toString();
+            if (this.unicodeConverter) {
+                var unicodeConverterFunc = this._system.app.systems.element.getUnicodeConverter();
+                if (unicodeConverterFunc) {
+                    str = unicodeConverterFunc(str);
+                } else {
+                    console.warn('Element created with unicodeConverter option but no unicodeConverter function registered');
+                }
+            }
             if (this._text !== str) {
                 if (this._font) {
                     this._updateText(str);
@@ -806,8 +870,18 @@ Object.assign(pc, function () {
             var i;
             var len;
 
+            var previousFontType;
+
+            if (this._font) previousFontType = this._font.type;
+
             this._font = value;
             if (!value) return;
+
+            // if font type has changed we may need to get change material
+            if (value.type !== previousFontType) {
+                var screenSpace = (this._element.screen && this._element.screen.screen.screenSpace);
+                this._updateMaterial(screenSpace);
+            }
 
             // make sure we have as many meshInfo entries
             // as the number of font textures
@@ -830,7 +904,7 @@ Object.assign(pc, function () {
                         mi.setParameter("font_sdfIntensity", this._font.intensity);
                         mi.setParameter("font_pxrange", this._getPxRange(this._font));
                         mi.setParameter("font_textureWidth", this._font.data.info.maps[i].width);
-                        mi.setParameter("texture_msdfMap", this._font.textures[i]);
+                        this._setTextureParams(mi, this._font.textures[i]);
                     }
                 }
             }
@@ -902,6 +976,24 @@ Object.assign(pc, function () {
             if (value && Math.abs(this._element.anchor.y - this._element.anchor.w) < 0.0001) {
                 this._element.height = this.height;
             }
+        }
+    });
+
+    // private
+    Object.defineProperty(TextElement.prototype, "aabb", {
+        get: function () {
+            if (this._aabbDirty) {
+                for (var i = 0; i < this._meshInfo.length; i++) {
+                    if (i === 0) {
+                        this._aabb.copy(this._meshInfo[i].meshInstance.aabb);
+                    } else {
+                        this._aabb.add(this._meshInfo[i].meshInstance.aabb);
+                    }
+                }
+
+                this._aabbDirty = false;
+            }
+            return this._aabb;
         }
     });
 

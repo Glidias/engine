@@ -317,6 +317,10 @@ Object.assign(pc, function () {
          * because the Entity or any of its parents are disabled or the Script Component is disabled or the Script Instance is disabled.
          * When disabled no update methods will be called on each tick.
          * initialize and postInitialize methods will run once when the script instance is in `enabled` state during app tick.
+         * @param {Object} args The input arguments object
+         * @param {Object} args.app The {@link pc.Application} that is running the script
+         * @param {Object} args.entity The {@link pc.Entity} that the script is attached to
+         *
          */
         var script = function (args) {
             // #ifdef DEBUG
@@ -335,6 +339,11 @@ Object.assign(pc, function () {
             this.__attributes = { };
             this.__attributesRaw = args.attributes || null;
             this.__scriptType = script;
+
+            // the order in the script component that the
+            // methods of this script instance will run relative to
+            // other script instances in the component
+            this.__executionOrder = -1;
         };
 
         /**
@@ -575,7 +584,7 @@ Object.assign(pc, function () {
     // reserved script attribute names
     createScript.reservedAttributes = [
         'app', 'entity', 'enabled', '_enabled', '_enabledOld', '_destroyed',
-        '__attributes', '__attributesRaw', '__scriptType',
+        '__attributes', '__attributesRaw', '__scriptType', '__executionOrder',
         '_callbacks', 'has', 'on', 'off', 'fire', 'once', 'hasEvent'
     ];
     var reservedAttributes = { };

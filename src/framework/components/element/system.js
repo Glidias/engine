@@ -1,22 +1,6 @@
 Object.assign(pc, function () {
     var _schema = ['enabled'];
 
-    var nineSliceBasePS = [
-        "varying vec2 vMask;",
-        "varying vec2 vTiledUv;",
-        "uniform vec4 innerOffset;",
-        "uniform vec2 outerScale;",
-        "uniform vec4 atlasRect;",
-        "vec2 nineSlicedUv;"
-    ].join('\n');
-
-    var nineSliceUvPs = [
-        "vec2 tileMask = step(vMask, vec2(0.99999));",
-        "vec2 clampedUv = mix(innerOffset.xy*0.5, vec2(1.0) - innerOffset.zw*0.5, fract(vTiledUv));",
-        "clampedUv = clampedUv * atlasRect.zw + atlasRect.xy;",
-        "nineSlicedUv = vUv0 * tileMask + clampedUv * (vec2(1.0) - tileMask);"
-    ].join('\n');
-
     /**
      * @constructor
      * @name pc.ElementComponentSystem
@@ -25,6 +9,8 @@ Object.assign(pc, function () {
      * @extends pc.ComponentSystem
      */
     var ElementComponentSystem = function ElementComponentSystem(app) {
+        pc.ComponentSystem.call(this, app);
+
         this.id = 'element';
         this.app = app;
         app.systems.add(this.id, this);
@@ -33,6 +19,8 @@ Object.assign(pc, function () {
         this.DataType = pc.ElementComponentData;
 
         this.schema = _schema;
+        this._unicodeConverter = null;
+        this._rtlReorder = null;
 
         // default texture - make white so we can tint it with emissive color
         this._defaultTexture = new pc.Texture(app.graphicsDevice, { width: 1, height: 1, format: pc.PIXELFORMAT_R8_G8_B8_A8 });
@@ -45,9 +33,6 @@ Object.assign(pc, function () {
         pixels.set(pixelData);
         this._defaultTexture.unlock();
 
-
-        this._maskMaterials = {}; // cache for materials that mask elements
-
         this.defaultImageMaterial = new pc.StandardMaterial();
         this.defaultImageMaterial.diffuse.set(0, 0, 0); // black diffuse color to prevent ambient light being included
         this.defaultImageMaterial.emissive.set(0.5, 0.5, 0.5); // use non-white to compile shader correctly
@@ -55,7 +40,6 @@ Object.assign(pc, function () {
         this.defaultImageMaterial.emissiveTint = true;
         this.defaultImageMaterial.opacityMap = this._defaultTexture;
         this.defaultImageMaterial.opacityMapChannel = "a";
-        this.defaultImageMaterial.opacityTint = true;
         this.defaultImageMaterial.opacity = 0; // use non-1 opacity to compile shader correctly
         this.defaultImageMaterial.useLighting = false;
         this.defaultImageMaterial.useGammaTonemap = false;
@@ -76,24 +60,17 @@ Object.assign(pc, function () {
 
         // 9 sliced material is like the default but with custom chunks
         this.defaultImage9SlicedMaterial = this.defaultImageMaterial.clone();
-        this.defaultImage9SlicedMaterial.chunks.basePS = pc.shaderChunks.basePS + nineSliceBasePS;
-        this.defaultImage9SlicedMaterial.chunks.startPS = pc.shaderChunks.startPS + "nineSlicedUv = vUv0;\n";
-        this.defaultImage9SlicedMaterial.chunks.emissivePS = pc.shaderChunks.emissivePS.replace("$UV", "nineSlicedUv");
-        this.defaultImage9SlicedMaterial.chunks.opacityPS = pc.shaderChunks.opacityPS.replace("$UV", "nineSlicedUv");
-        this.defaultImage9SlicedMaterial.chunks.transformVS = "#define NINESLICED\n" + pc.shaderChunks.transformVS;
-        this.defaultImage9SlicedMaterial.chunks.uv0VS = pc.shaderChunks.uv9SliceVS;
+        this.defaultImage9SlicedMaterial.nineSlicedMode = pc.SPRITE_RENDERMODE_SLICED;
         this.defaultImage9SlicedMaterial.update();
 
         // 9-sliced in tiled mode
         this.defaultImage9TiledMaterial = this.defaultImage9SlicedMaterial.clone();
-        this.defaultImage9TiledMaterial.chunks.basePS = pc.shaderChunks.basePS + "#define NINESLICETILED\n" + nineSliceBasePS;
-        this.defaultImage9TiledMaterial.chunks.startPS = pc.shaderChunks.startPS + nineSliceUvPs;
-        this.defaultImage9TiledMaterial.chunks.emissivePS = pc.shaderChunks.emissivePS.replace("$UV", "nineSlicedUv, -1000.0");
-        this.defaultImage9TiledMaterial.chunks.opacityPS = pc.shaderChunks.opacityPS.replace("$UV", "nineSlicedUv, -1000.0");
+        this.defaultImage9TiledMaterial.nineSlicedMode = pc.SPRITE_RENDERMODE_TILED;
         this.defaultImage9TiledMaterial.update();
 
         // 9 sliced mask
         this.defaultImage9SlicedMaskMaterial = this.defaultImage9SlicedMaterial.clone();
+        this.defaultImage9SlicedMaskMaterial.nineSlicedMode = pc.SPRITE_RENDERMODE_SLICED;
         this.defaultImage9SlicedMaskMaterial.alphaTest = 1;
         this.defaultImage9SlicedMaskMaterial.redWrite = false;
         this.defaultImage9SlicedMaskMaterial.greenWrite = false;
@@ -103,6 +80,7 @@ Object.assign(pc, function () {
 
         // 9 sliced tiled mask
         this.defaultImage9TiledMaskMaterial = this.defaultImage9TiledMaterial.clone();
+        this.defaultImage9TiledMaskMaterial.nineSlicedMode = pc.SPRITE_RENDERMODE_TILED;
         this.defaultImage9TiledMaskMaterial.alphaTest = 1;
         this.defaultImage9TiledMaskMaterial.redWrite = false;
         this.defaultImage9TiledMaskMaterial.greenWrite = false;
@@ -117,19 +95,18 @@ Object.assign(pc, function () {
 
         // 9 sliced screen space
         this.defaultScreenSpaceImage9SlicedMaterial = this.defaultImage9SlicedMaterial.clone();
+        this.defaultScreenSpaceImage9SlicedMaterial.nineSlicedMode = pc.SPRITE_RENDERMODE_SLICED;
         this.defaultScreenSpaceImage9SlicedMaterial.depthTest = false;
         this.defaultScreenSpaceImage9SlicedMaterial.update();
 
         // screen space 9-sliced in tiled mode
         this.defaultScreenSpaceImage9TiledMaterial = this.defaultScreenSpaceImage9SlicedMaterial.clone();
-        this.defaultScreenSpaceImage9TiledMaterial.chunks.basePS = pc.shaderChunks.basePS + "#define NINESLICETILED\n" + nineSliceBasePS;
-        this.defaultScreenSpaceImage9TiledMaterial.chunks.startPS = pc.shaderChunks.startPS + nineSliceUvPs;
-        this.defaultScreenSpaceImage9TiledMaterial.chunks.emissivePS = pc.shaderChunks.emissivePS.replace("$UV", "nineSlicedUv, -1000.0");
-        this.defaultScreenSpaceImage9TiledMaterial.chunks.opacityPS = pc.shaderChunks.opacityPS.replace("$UV", "nineSlicedUv, -1000.0");
+        this.defaultScreenSpaceImage9TiledMaterial.nineSlicedMode = pc.SPRITE_RENDERMODE_TILED;
         this.defaultScreenSpaceImage9TiledMaterial.update();
 
         // 9 sliced screen space mask
         this.defaultScreenSpaceImageMask9SlicedMaterial = this.defaultScreenSpaceImage9SlicedMaterial.clone();
+        this.defaultScreenSpaceImageMask9SlicedMaterial.nineSlicedMode = pc.SPRITE_RENDERMODE_SLICED;
         this.defaultScreenSpaceImageMask9SlicedMaterial.alphaTest = 1;
         this.defaultScreenSpaceImageMask9SlicedMaterial.redWrite = false;
         this.defaultScreenSpaceImageMask9SlicedMaterial.greenWrite = false;
@@ -139,6 +116,7 @@ Object.assign(pc, function () {
 
         // 9 sliced tiled screen space mask
         this.defaultScreenSpaceImageMask9TiledMaterial = this.defaultScreenSpaceImage9TiledMaterial.clone();
+        this.defaultScreenSpaceImageMask9TiledMaterial.nineSlicedMode = pc.SPRITE_RENDERMODE_TILED;
         this.defaultScreenSpaceImageMask9TiledMaterial.alphaTest = 1;
         this.defaultScreenSpaceImageMask9TiledMaterial.redWrite = false;
         this.defaultScreenSpaceImageMask9TiledMaterial.greenWrite = false;
@@ -155,22 +133,10 @@ Object.assign(pc, function () {
         this.defaultScreenSpaceImageMaskMaterial.alphaWrite = false;
         this.defaultScreenSpaceImageMaskMaterial.update();
 
-        this.defaultTextMaterial = new pc.StandardMaterial();
-        this.defaultTextMaterial.msdfMap = this._defaultTexture;
-        this.defaultTextMaterial.useLighting = false;
-        this.defaultTextMaterial.useGammaTonemap = false;
-        this.defaultTextMaterial.useFog = false;
-        this.defaultTextMaterial.useSkybox = false;
-        this.defaultTextMaterial.diffuse.set(0, 0, 0); // black diffuse color to prevent ambient light being included
-        this.defaultTextMaterial.emissive.set(1, 1, 1);
-        this.defaultTextMaterial.opacity = 0.5;
-        this.defaultTextMaterial.blendType = pc.BLEND_PREMULTIPLIED;
-        this.defaultTextMaterial.depthWrite = false;
-        this.defaultTextMaterial.update();
 
-        this.defaultScreenSpaceTextMaterial = this.defaultTextMaterial.clone();
-        this.defaultScreenSpaceTextMaterial.depthTest = false;
-        this.defaultScreenSpaceTextMaterial.update();
+        // text element materials created on demand by getTextElementMaterial()
+        this.defaultTextMaterial = null;
+        this.defaultScreenSpaceTextMaterial = null;
 
         this.defaultImageMaterials = [
             this.defaultImageMaterial,
@@ -189,7 +155,8 @@ Object.assign(pc, function () {
 
         this.on('beforeremove', this.onRemoveComponent, this);
     };
-    ElementComponentSystem = pc.inherits(ElementComponentSystem, pc.ComponentSystem);
+    ElementComponentSystem.prototype = Object.create(pc.ComponentSystem.prototype);
+    ElementComponentSystem.prototype.constructor = ElementComponentSystem;
 
     pc.Component._buildAccessors(pc.ElementComponent.prototype, _schema);
 
@@ -327,6 +294,8 @@ Object.assign(pc, function () {
             } else if (component.type === pc.ELEMENTTYPE_TEXT) {
                 if (data.autoWidth !== undefined) component.autoWidth = data.autoWidth;
                 if (data.autoHeight !== undefined) component.autoHeight = data.autoHeight;
+                if (data.rtlReorder !== undefined) component.rtlReorder = data.rtlReorder;
+                if (data.unicodeConverter !== undefined) component.unicodeConverter = data.unicodeConverter;
                 if (data.text !== undefined) component.text = data.text;
                 if (data.color !== undefined) {
                     if (data.color instanceof pc.Color) {
@@ -362,7 +331,7 @@ Object.assign(pc, function () {
                 component._updateScreen(result.screen);
             }
 
-            ElementComponentSystem._super.initializeComponentData.call(this, component, data, properties);
+            pc.ComponentSystem.prototype.initializeComponentData.call(this, component, data, properties);
         },
 
         onRemoveComponent: function (entity, component) {
@@ -384,6 +353,8 @@ Object.assign(pc, function () {
                 autoHeight: source.autoHeight,
                 type: source.type,
                 rect: source.rect && source.rect.clone() || source.rect,
+                rtlReorder: source.rtlReorder,
+                unicodeConverter: source.unicodeConverter,
                 materialAsset: source.materialAsset,
                 material: source.material,
                 color: source.color && source.color.clone() || source.color,
@@ -406,6 +377,110 @@ Object.assign(pc, function () {
                 batchGroupId: source.batchGroupId,
                 mask: source.mask
             });
+        },
+
+        getTextElementMaterial: function (screenSpace, msdf) {
+            if (screenSpace) {
+                if (msdf) {
+                    if (!this.defaultScreenSpaceTextMaterial) {
+                        this.defaultScreenSpaceTextMaterial = new pc.StandardMaterial();
+                        this.defaultScreenSpaceTextMaterial.name = "defaultScreenSpaceTextMaterial";
+                        this.defaultScreenSpaceTextMaterial.msdfMap = this._defaultTexture;
+                        this.defaultScreenSpaceTextMaterial.useLighting = false;
+                        this.defaultScreenSpaceTextMaterial.useGammaTonemap = false;
+                        this.defaultScreenSpaceTextMaterial.useFog = false;
+                        this.defaultScreenSpaceTextMaterial.useSkybox = false;
+                        this.defaultScreenSpaceTextMaterial.diffuse.set(0, 0, 0); // black diffuse color to prevent ambient light being included
+                        this.defaultScreenSpaceTextMaterial.emissive.set(1, 1, 1);
+                        this.defaultScreenSpaceTextMaterial.opacity = 0.5;
+                        this.defaultScreenSpaceTextMaterial.blendType = pc.BLEND_PREMULTIPLIED;
+                        this.defaultScreenSpaceTextMaterial.depthWrite = false;
+                        this.defaultScreenSpaceTextMaterial.depthTest = false;
+                        this.defaultScreenSpaceTextMaterial.update();
+                    }
+                    return this.defaultScreenSpaceTextMaterial;
+                }
+                if (!this.defaultScreenSpaceBitmapTextMaterial) {
+                    this.defaultScreenSpaceBitmapTextMaterial = new pc.StandardMaterial();
+                    this.defaultScreenSpaceBitmapTextMaterial.name = "defaultScreenSpaceBitmapTextMaterial";
+                    this.defaultScreenSpaceBitmapTextMaterial.emissive.set(0.5, 0.5, 0.5); // set to non-(1,1,1) so that tint is actually applied
+                    this.defaultScreenSpaceBitmapTextMaterial.emissiveMap = this._defaultTexture;
+                    this.defaultScreenSpaceBitmapTextMaterial.emissiveTint = true;
+                    this.defaultScreenSpaceBitmapTextMaterial.opacity = 0.5;
+                    this.defaultScreenSpaceBitmapTextMaterial.opacityMap = this._defaultTexture;
+                    this.defaultScreenSpaceBitmapTextMaterial.opacityMapChannel = 'a';
+                    this.defaultScreenSpaceBitmapTextMaterial.useLighting = false;
+                    this.defaultScreenSpaceBitmapTextMaterial.useGammaTonemap = false;
+                    this.defaultScreenSpaceBitmapTextMaterial.useFog = false;
+                    this.defaultScreenSpaceBitmapTextMaterial.useSkybox = false;
+                    this.defaultScreenSpaceBitmapTextMaterial.diffuse.set(0, 0, 0); // black diffuse color to prevent ambient light being included
+                    this.defaultScreenSpaceBitmapTextMaterial.blendType = pc.BLEND_PREMULTIPLIED;
+                    this.defaultScreenSpaceBitmapTextMaterial.depthWrite = false;
+                    this.defaultScreenSpaceBitmapTextMaterial.depthTest = false;
+                    this.defaultScreenSpaceBitmapTextMaterial.update();
+                }
+                return this.defaultScreenSpaceBitmapTextMaterial;
+
+            }
+            if (msdf) {
+                if (!this.defaultTextMaterial) {
+                    this.defaultTextMaterial = new pc.StandardMaterial();
+                    this.defaultTextMaterial.name = "defaultTextMaterial";
+                    this.defaultTextMaterial.msdfMap = this._defaultTexture;
+                    this.defaultTextMaterial.useLighting = false;
+                    this.defaultTextMaterial.useGammaTonemap = false;
+                    this.defaultTextMaterial.useFog = false;
+                    this.defaultTextMaterial.useSkybox = false;
+                    this.defaultTextMaterial.diffuse.set(0, 0, 0); // black diffuse color to prevent ambient light being included
+                    this.defaultTextMaterial.emissive.set(1, 1, 1);
+                    this.defaultTextMaterial.opacity = 0.5;
+                    this.defaultTextMaterial.blendType = pc.BLEND_PREMULTIPLIED;
+                    this.defaultTextMaterial.depthWrite = false;
+                    this.defaultTextMaterial.update();
+                }
+                return this.defaultTextMaterial;
+            }
+            if (!this.defaultBitmapTextMaterial) {
+                this.defaultBitmapTextMaterial = new pc.StandardMaterial();
+                this.defaultBitmapTextMaterial.name = "defaultBitmapTextMaterial";
+                this.defaultBitmapTextMaterial.emissive.set(0.5, 0.5, 0.5);  // set to non-(1,1,1) so that tint is actually applied
+                this.defaultBitmapTextMaterial.emissiveTint = true;
+                this.defaultBitmapTextMaterial.emissiveMap = this._defaultTexture;
+                this.defaultBitmapTextMaterial.opacity = 0.5;
+                this.defaultBitmapTextMaterial.opacityMap = this._defaultTexture;
+                this.defaultBitmapTextMaterial.opacityMapChannel = 'a';
+                this.defaultBitmapTextMaterial.useLighting = false;
+                this.defaultBitmapTextMaterial.useGammaTonemap = false;
+                this.defaultBitmapTextMaterial.useFog = false;
+                this.defaultBitmapTextMaterial.useSkybox = false;
+                this.defaultBitmapTextMaterial.diffuse.set(0, 0, 0); // black diffuse color to prevent ambient light being included
+                this.defaultBitmapTextMaterial.blendType = pc.BLEND_PREMULTIPLIED;
+                this.defaultBitmapTextMaterial.depthWrite = false;
+                this.defaultBitmapTextMaterial.update();
+            }
+            return this.defaultBitmapTextMaterial;
+
+
+        },
+
+        getImageElementMaterial: function (screenSpace, mask, nineSliced, nineSliceTiled) {
+            // TODO
+        },
+
+        registerUnicodeConverter: function (func) {
+            this._unicodeConverter = func;
+        },
+
+        registerRtlReorder: function (func) {
+            this._rtlReorder = func;
+        },
+
+        getUnicodeConverter: function () {
+            return this._unicodeConverter;
+        },
+
+        getRtlReorder: function () {
+            return this._rtlReorder;
         }
     });
 
