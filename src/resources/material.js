@@ -15,6 +15,13 @@ Object.assign(pc, function () {
         lightMap: 'white'
     };
 
+    /**
+     * @class
+     * @name pc.MaterialHandler
+     * @implements {pc.ResourceHandler}
+     * @classdesc Resource handler used for loading {@link pc.Material} resources.
+     * @param {pc.Application} app - The running {@link pc.Application}.
+     */
     var MaterialHandler = function (app) {
         this._assets = app.assets;
         this._device = app.graphicsDevice;
@@ -22,12 +29,22 @@ Object.assign(pc, function () {
         this._placeholderTextures = null;
 
         this._parser = new pc.JsonStandardMaterialParser();
+        this.retryRequests = false;
     };
 
     Object.assign(MaterialHandler.prototype, {
         load: function (url, callback) {
+            if (typeof url === 'string') {
+                url = {
+                    load: url,
+                    original: url
+                };
+            }
+
             // Loading from URL (engine-only)
-            pc.http.get(url, function (err, response) {
+            pc.http.get(url.load, {
+                retry: this.retryRequests
+            }, function (err, response) {
                 if (!err) {
                     if (callback) {
                         response._engine = true;
@@ -35,7 +52,7 @@ Object.assign(pc, function () {
                     }
                 } else {
                     if (callback) {
-                        callback(pc.string.format("Error loading material: {0} [{1}]", url, err));
+                        callback(pc.string.format("Error loading material: {0} [{1}]", url.original, err));
                     }
                 }
             });
@@ -75,6 +92,7 @@ Object.assign(pc, function () {
                     height: 2,
                     format: pc.PIXELFORMAT_R8_G8_B8_A8
                 });
+                this._placeholderTextures[key].name = 'placeholder';
 
                 // fill pixels with color
                 var pixels = this._placeholderTextures[key].lock();
@@ -164,7 +182,7 @@ Object.assign(pc, function () {
 
         _onCubemapLoad: function (parameterName, materialAsset, cubemapAsset) {
             this._assignCubemap(parameterName, materialAsset, cubemapAsset.resources);
-            materialAsset.resource.initialize(materialAsset.data);
+            this._parser.initialize(materialAsset.resource, materialAsset.data);
         },
 
         _onCubemapAdd: function (parameterName, materialAsset, cubemapAsset) {
@@ -291,7 +309,7 @@ Object.assign(pc, function () {
             }
 
             // call to re-initialize material after all textures assigned
-            material.initialize(data);
+            this._parser.initialize(material, data);
         }
     });
 

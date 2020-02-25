@@ -138,34 +138,52 @@ pc.programlib.standard = {
         transformUv1: { n: "transformVS", f: _oldChunkTransformUv1 }
     },
 
-    generateKey: function (device, options) {
-        var prop, props = [];
+    // Shared Sandard Material option structures
+    optionsContext: {},
+    optionsContextMin: {},
+
+    generateKey: function (options) {
+        var buildPropertiesList = function (options) {
+            var props = [];
+            for (var prop in options) {
+                if (options.hasOwnProperty(prop) && prop !== "chunks" && prop !== "lights")
+                    props.push(prop);
+            }
+            return props.sort();
+        };
+        var props;
+        if (options === this.optionsContextMin) {
+            if (!this.propsMin) this.propsMin = buildPropertiesList(options);
+            props = this.propsMin;
+        } else if (options === this.optionsContext) {
+            if (!this.props) this.props = buildPropertiesList(options);
+            props = this.props;
+        } else {
+            props = buildPropertiesList(options);
+        }
+
         var key = "standard";
-        var light;
-        for (prop in options) {
-            if (options.hasOwnProperty(prop)) {
-                if (prop === "chunks") {
-                    for (var p in options[prop]) {
-                        if (options[prop].hasOwnProperty(p)) {
-                            props.push(p + options.chunks[p]);
-                        }
-                    }
-                } else {
-                    if (options[prop]) props.push(prop);
+
+        var i;
+        for (i = 0; i < props.length; i++) {
+            if (options[props[i]])
+                key += props[i] + options[props[i]];
+        }
+
+        if (options.chunks) {
+            var chunks = [];
+            for (var p in options.chunks) {
+                if (options.chunks.hasOwnProperty(p)) {
+                    chunks.push(p + options.chunks[p]);
                 }
             }
-        }
-        props.sort();
-        for (prop in props) {
-            if (props.hasOwnProperty(prop)) {
-                key += props[prop] + options[props[prop]];
-            }
+            chunks.sort();
+            key += chunks;
         }
 
         if (options.lights) {
-            for (var i = 0; i < options.lights.length; i++) {
-                light = options.lights[i];
-                key += light.key;
+            for (i = 0; i < options.lights.length; i++) {
+                key += options.lights[i].key;
             }
         }
 
@@ -205,21 +223,22 @@ pc.programlib.standard = {
      * @private
      * @function
      * @name _getUvSourceExpression
-     * @description Get the code with which to to replace '$UV' in the map shader functions
-     * @param  {String} transformPropName Name of the transform id in the options block. Usually "basenameTransform"
-     * @param  {String} uVPropName        Name of the UV channel in the options block. Usually "basenameUv"
-     * @param  {Object} options           The options passed into createShaderDefinition
-     * @returns {String}                   The code used to replace "$UV" in the shader code
+     * @description Get the code with which to to replace '$UV' in the map shader functions.
+     * @param  {string} transformPropName - Name of the transform id in the options block. Usually "basenameTransform".
+     * @param  {string} uVPropName - Name of the UV channel in the options block. Usually "basenameUv".
+     * @param  {object} options - The options passed into createShaderDefinition.
+     * @returns {string} The code used to replace "$UV" in the shader code.
      */
     _getUvSourceExpression: function (transformPropName, uVPropName, options) {
         var transformId = options[transformPropName];
         var uvChannel = options[uVPropName];
 
         var expression;
+        var isMainPass = (options.pass === pc.SHADER_FORWARD || options.pass === pc.SHADER_FORWARDHDR);
 
-        if (options.nineSlicedMode === pc.SPRITE_RENDERMODE_SLICED) {
+        if (isMainPass && options.nineSlicedMode === pc.SPRITE_RENDERMODE_SLICED) {
             expression = "nineSlicedUv";
-        } else if (options.nineSlicedMode === pc.SPRITE_RENDERMODE_TILED) {
+        } else if (isMainPass && options.nineSlicedMode === pc.SPRITE_RENDERMODE_TILED) {
             expression = "nineSlicedUv, -1000.0";
         } else {
             if (transformId === 0) {
@@ -252,17 +271,18 @@ pc.programlib.standard = {
         s += this._addMapDef("MAPTEXTURE", map);
         return s;
     },
+
     /**
      * @private
      * @function
-     * @name  _addMap
-     * @description Add chunk for Map Types (used for all maps except Normal)
-     * @param {String} propName      The base name of the map: diffuse | emissive | opacity | light | height | metalness | specular | gloss | ao
-     * @param {String} chunkName     The name of the chunk to use. Usually "basenamePS"
-     * @param {Object} options       The options passed into to createShaderDefinition
-     * @param {Object} chunks        The set of shader chunks to choose from
-     * @param {String} samplerFormat Format of texture sampler to use - 0: "texture2DSRGB", 1: "texture2DRGBM", 2: "texture2D"
-     * @returns {String} The shader code to support this map
+     * @name _addMap
+     * @description Add chunk for Map Types (used for all maps except Normal).
+     * @param {string} propName - The base name of the map: diffuse | emissive | opacity | light | height | metalness | specular | gloss | ao.
+     * @param {string} chunkName - The name of the chunk to use. Usually "basenamePS".
+     * @param {object} options - The options passed into to createShaderDefinition.
+     * @param {object} chunks - The set of shader chunks to choose from.
+     * @param {string} samplerFormat - Format of texture sampler to use - 0: "texture2DSRGB", 1: "texture2DRGBM", 2: "texture2D".
+     * @returns {string} The shader code to support this map.
      */
     _addMap: function (propName, chunkName, options, chunks, samplerFormat) {
         var mapPropName = propName + "Map";
@@ -345,12 +365,12 @@ pc.programlib.standard = {
      * @private
      * @function
      * @name _fsAddBaseCode
-     * @description Add "Base" Code section to fragment shader
-     * @param  {String} code Current fragment shader code
-     * @param  {pc.GraphicsDevice} device The graphics device
-     * @param  {Object} chunks All available shader chunks
-     * @param  {Object} options The Shader Definition options
-     * @returns {String} The new fragment shader code (old+new)
+     * @description Add "Base" Code section to fragment shader.
+     * @param  {string} code - Current fragment shader code.
+     * @param  {pc.GraphicsDevice} device - The graphics device.
+     * @param  {object} chunks - All available shader chunks.
+     * @param  {object} options - The Shader Definition options.
+     * @returns {string} The new fragment shader code (old+new).
      */
     _fsAddBaseCode: function (code, device, chunks, options) {
         code += chunks.basePS;
@@ -367,12 +387,12 @@ pc.programlib.standard = {
      * @private
      * @function
      * @name  _fsAddStartCode
-     * @description Add "Start" Code section to fragment shader
-     * @param  {String} code  Current fragment shader code
-     * @param  {pc.GraphicsDevice} device The graphics device
-     * @param  {Object} chunks All available shader chunks
-     * @param  {Object} options The Shader Definition options
-     * @returns {String} The new fragment shader code (old+new)
+     * @description Add "Start" Code section to fragment shader.
+     * @param  {string} code -  Current fragment shader code.
+     * @param  {pc.GraphicsDevice} device - The graphics device.
+     * @param  {object} chunks - All available shader chunks.
+     * @param  {object} options - The Shader Definition options.
+     * @returns {string} The new fragment shader code (old+new).
      */
     _fsAddStartCode: function (code, device, chunks, options) {
         code += chunks.startPS;
@@ -698,7 +718,7 @@ pc.programlib.standard = {
 
         if (options.pass === pc.SHADER_PICK) {
             // ##### PICK PASS #####
-            code += "uniform vec4 uColor;";
+            code += "uniform vec4 uColor;\n";
             code += varyings;
             if (options.alphaTest) {
                 code += "float dAlpha;\n";
@@ -912,7 +932,7 @@ pc.programlib.standard = {
 
 
         var tbn;
-        if (!options.hasTangents) {
+        if (!options.hasTangents && device.extStandardDerivatives) {
             tbn = chunks.TBNderivativePS;
         } else if (options.fastTbn) {
             tbn = chunks.TBNfastPS;
@@ -925,10 +945,10 @@ pc.programlib.standard = {
                 code += options.packedNormal ? chunks.normalXYPS : chunks.normalXYZPS;
 
                 var transformedNormalMapUv = this._getUvSourceExpression("normalMapTransform", "normalMapUv", options);
-                if (options.needsNormalFloat) {
-                    code += (options.fastTbn ? chunks.normalMapFloatTBNfastPS : chunks.normalMapFloatPS).replace(/\$UV/g, transformedNormalMapUv);
-                } else {
+                if (options.normalizeNormalMap) {
                     code += chunks.normalMapPS.replace(/\$UV/g, transformedNormalMapUv);
+                } else {
+                    code += chunks.normalMapFastPS.replace(/\$UV/g, transformedNormalMapUv);
                 }
                 if (!options.hasTangents) tbn = tbn.replace(/\$UV/g, transformedNormalMapUv);
                 code += tbn;
@@ -937,8 +957,8 @@ pc.programlib.standard = {
             }
         }
 
-        code += pc.programlib.gammaCode(options.gamma);
-        code += pc.programlib.tonemapCode(options.toneMap);
+        code += pc.programlib.gammaCode(options.gamma, chunks);
+        code += pc.programlib.tonemapCode(options.toneMap, chunks);
         code += pc.programlib.fogCode(options.fog, chunks);
 
         if (options.useRgbm) code += chunks.rgbmPS;
@@ -959,10 +979,10 @@ pc.programlib.standard = {
 
         if (options.useSpecular && (lighting || reflections)) {
             if (options.specularAntialias && options.normalMap) {
-                if (options.needsNormalFloat && needsNormal) {
-                    code += chunks.specularAaToksvigFloatPS;
-                } else {
+                if (options.normalizeNormalMap && needsNormal) {
                     code += chunks.specularAaToksvigPS;
+                } else {
+                    code += chunks.specularAaToksvigFastPS;
                 }
             } else {
                 code += chunks.specularAaNonePS;

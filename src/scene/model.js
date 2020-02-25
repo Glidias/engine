@@ -1,6 +1,6 @@
 Object.assign(pc, function () {
     /**
-     * @constructor
+     * @class
      * @name pc.Model
      * @classdesc A model is a graphical object that can be added to or removed from a scene.
      * It contains a hierarchy and any number of mesh instances.
@@ -21,6 +21,10 @@ Object.assign(pc, function () {
         this.lights = [];
 
         this._shadersVersion = 0;
+
+        // used by the model component to flag that this
+        // model has been assigned
+        this._immutable = false;
     };
 
     Object.assign(Model.prototype, {
@@ -152,7 +156,7 @@ Object.assign(pc, function () {
         /**
          * @function
          * @name pc.Model#destroy
-         * @description destroys skinning texture and possibly deletes vertex/index buffers of a model.
+         * @description Destroys skinning texture and possibly deletes vertex/index buffers of a model.
          * Mesh is reference-counted, so buffers are only deleted if all models with referencing mesh instances were deleted.
          * That means all in-scene models + the "base" one (asset.resource) which is created when the model is parsed.
          * It is recommended to use asset.unload() instead, which will also remove the model from the scene.
@@ -208,7 +212,7 @@ Object.assign(pc, function () {
          * @description Generates the necessary internal data for a model to be
          * renderable as wireframe. Once this function has been called, any mesh
          * instance in the model can have its renderStyle property set to
-         * pc.RENDERSTYLE_WIREFRAME
+         * pc.RENDERSTYLE_WIREFRAME.
          * @example
          * model.generateWireframe();
          * for (var i = 0; i < model.meshInstances.length; i++) {
